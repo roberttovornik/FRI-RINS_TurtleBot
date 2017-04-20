@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: ferns_detector
+Description: Description of ferns_detector
+Version: 0.1.0
+Cflags: -I/home/robert/ROS/devel/include
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: 

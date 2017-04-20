@@ -1,0 +1,211 @@
+#!/usr/bin/env python
+import roslib
+roslib.load_manifest('localizer')
+import rospy
+import sys, select, termios, tty
+from std_msgs.msg import String, Bool, ColorRGBA
+import sensor_msgs.msg
+import message_filters
+import collections
+from detection_msgs.msg import Detection
+from localizer.srv import Localize
+from sensor_msgs.msg import CameraInfo
+from visualization_msgs.msg import Marker, MarkerArray
+from image_geometry import PinholeCameraModel
+from geometry_msgs.msg import Point, Vector3
+new_detection = False
+import time
+import math
+import tf
+import copy
+from datetime import tzinfo, timedelta, datetime
+
+class DetectionMapper():
+    def euclidean_distance(self,marker1,marker2):
+        print "Evklidska razdalja med markerjema: ",math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 )
+        return math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 )
+        #return math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 + (marker1.pose.position.z - marker2.pose.position.z)**2 )
+	
+    def preblizu(self,marker):
+        razdalja_min=self.euclid_dist
+        #razdalja_min=0.31
+        zavrzi_marker = False
+        for obstojeci_marker in self.faces_locations.markers:
+            if self.euclidean_distance(marker,obstojeci_marker) < razdalja_min:
+                print "***Novi marker zavernjen, ker je preblizu obstojecim! distanca = ",self.euclidean_distance(marker,obstojeci_marker)
+                zavrzi_marker = True
+                break
+        return zavrzi_marker
+
+
+    def filter_markers(self):
+        min_detekcij = 5  # minimalno stevilo detekcij potrebnih za zanesljivo
+        if len(self.markers.markers)>=min_detekcij:
+            x_avg = 0
+            y_avg = 0
+            z_avg = 0
+            j = len(self.markers.markers) -1
+            while j >= 0:
+                x_avg += self.markers.markers[j].pose.position.x
+                y_avg += self.markers.markers[j].pose.position.y
+                z_avg += self.markers.markers[j].pose.position.z
+                if j == (int)(len(self.markers.markers) / 2): #Pri tvorbi novega markerja uporabi header srednjega paketa
+                    marker_tmp = copy.deepcopy(self.markers.markers[j])
+                del self.markers.markers[j]  # ko si marker enkrat uposteval ga izbrisi
+                j -= 1
+            x_avg /= len(self.markers.markers)
+            y_avg /= len(self.markers.markers)
+            z_avg /= len(self.markers.markers)
+        print "Zamenjujem ", len(self.markers.markers), " markerjev s tocko (", x_avg, " , ", y_avg, " , ", z_avg
+        # Dodaj nov marker namesto izbrisanih!
+        marker = Marker()
+        marker.header.stamp = marker_tmp.header.stamp
+        marker.header.frame_id = marker_tmp.header.frame_id
+        marker.pose.position = Point(x_avg, y_avg, z_avg)
+        marker.type = Marker.CYLINDER
+        marker.action = Marker.ADD
+        marker.frame_locked = False
+        marker.lifetime = rospy.Time(0)
+        marker.id = self.marker_id_counter
+        marker.scale = Vector3(0.1, 0.1, 0.1)
+        marker.color = ColorRGBA(1, 1, 0, 1)
+        self.markers.markers.append(marker)
+        self.marker_id_counter += 1
+
+        # Ce je marker preblizu ze katerem od dektetiranih ga zavrzi
+        if not self.preblizu(marker) and z_avg < 0.784 and not (x_avg == 0 and y_avg == 0 and z_avg == 0):
+            self.faces_locations.markers.append(marker)
+            print "**dodajam nov marker"
+        print "Shranjeni markerji so: "
+        for m in self.faces_locations.markers:
+            print "\t(", m.pose.position.x, " , ", m.pose.position.y, " , ", m.pose.position.z,")"
+
+    def camera_callback(self, camera_info):
+        self.camera_infos.append(camera_info)
+
+    def detections_callback(self, detection):
+        global new_detection
+        print "***DETEKTIRAL OBRAZ!"
+        new_detection=True
+        if not self.ts:
+            self.ts=datetime.utcnow()
+        else:
+            self.te=datetime.utcnow()
+            self.time_between_detections=(self.te-self.ts).seconds
+			self.ts=datetime.utcnow()
+
+
+        u = detection.x + detection.width / 2
+        v = detection.y + detection.height / 2
+        print "detection center: (",u," , ",v,")"
+
+        camera_info = None
+        best_time = 100
+        for ci in self.camera_infos:
+            time = abs(ci.header.stamp.to_sec() - detection.header.stamp.to_sec())
+            if time < best_time:
+                camera_info = ci
+                best_time = time
+
+        if not camera_info or best_time > 1:
+            return 
+
+        camera_model = PinholeCameraModel()
+        camera_model.fromCameraInfo(camera_info)
+        point = Point(((u - camera_model.cx()) - camera_model.Tx()) / camera_model.fx(),
+             ((v - camera_model.cy()) - camera_model.Ty()) / camera_model.fy(), 1)
+
+        print "***POINT: (",((u - camera_model.cx()) - camera_model.Tx()) / camera_model.fx()," , ",((v - camera_model.cy()) - camera_model.Ty()) / camera_model.fy()," , ",1,")"
+        print "***posiljam sporocilo localizer nodu.."
+
+        localization = self.localize(detection.header, point, self.region_scope)
+        '''
+        try:
+                (trans, rot) = self.listener.lookupTransform('/map', '/base_link', rospy.Time(0))
+
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                pass
+
+        '''
+        if not localization:
+            return
+	
+        '''print "Od localizer noda prejel sporocilo: "
+        print "Type: ",type(localization)
+        try:
+            #print "SCOPE: ",localization.scope
+            #print "POINT: ",localization.point
+            print "localization.pose.orientation.w: ",localization.pose.orientation.w
+            print "localization.pose.position.x: ",localization.pose.position.x
+            print "localization.pose.position.y: ",localization.pose.position.y
+        except:
+            print "Nicesar uporabnega --> ERROR!"'''
+
+            marker = Marker()
+            marker.header.stamp = detection.header.stamp
+            marker.header.frame_id = detection.header.frame_id
+            marker.pose = localization.pose
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.frame_locked = False
+            marker.lifetime = rospy.Duration.from_sec(1)
+            marker.id = self.marker_id_counter
+            marker.scale = Vector3(0.1, 0.1, 0.1)
+            marker.color = ColorRGBA(1, 0, 0, 1)
+            self.markers.markers.append(marker)
+            self.marker_id_counter += 1
+
+		print "Detection frameId: ", detection.header.frame_id
+
+    def flush(self):
+        min_time_between_detections=7
+        if not self.markers.markers:
+            self.markers = MarkerArray()
+            return
+        self.markers_pub.publish(self.markers)
+
+        if  self.time_between_detections>=min_time_between_detections:
+            mapper.filter_markers()
+        mapper.faces_locations_pub.publish(mapper.faces_locations)
+
+    def __init__(self):
+        self.markers = MarkerArray()
+        self.marker_id_counter = 0
+        self.region_scope = rospy.get_param('~region', 3)
+        self.buffer_size = rospy.get_param('~camera_buffer_size', 50)
+        rospy.wait_for_service('localizer/localize')
+
+        self.camera_infos = collections.deque(maxlen = self.buffer_size)
+        self.detections_sub = message_filters.Subscriber('detections', Detection)
+        self.detections_sub.registerCallback(self.detections_callback)
+
+        self.camera_sub = message_filters.Subscriber('camera_info', CameraInfo)
+        self.camera_sub.registerCallback(self.camera_callback)
+
+        self.localize = rospy.ServiceProxy('localizer/localize', Localize)
+        self.markers_pub = rospy.Publisher('markers', MarkerArray)
+
+        #na topic faces_locations posiljaj koordinate koncnih detekcij
+        self.faces_locations=MarkerArray()
+        self.faces_locations_pub = rospy.Publisher('faces_locations', MarkerArray)
+        self.euclid_dist=0.05
+        #self.listener = tf.TransformListener()
+        self.time_between_detections=0
+	self.ts=None
+	self.te=None
+   
+if __name__ == '__main__':
+    global new_detection
+    rospy.init_node('mapper')
+
+    try:
+        mapper = DetectionMapper()
+        r = rospy.Rate(30)
+        while not rospy.is_shutdown():
+            if new_detection:
+                mapper.flush()
+                new_detection=False
+            r.sleep()
+		
+    except rospy.ROSInterruptException: pass
+

@@ -1,0 +1,2 @@
+communication/julius_ros:communication/speech_proxy:communication/voice_navigation:depth/localizer:depth/pcl_demos:detection/detection_msgs:detection/dlib_detector:detection/ferns_detector:detection/opencv_detector:detection/zbar_detector:exercise1:exercise2:exercise3:exercise4:exercise6:navigation/costmap_layers:sample_tts:usb_cam-develop
+-DCATKIN_DEVEL_PREFIX=/home/robert/ROS/devel -DCMAKE_INSTALL_PREFIX=/home/robert/ROS/install -G Unix Makefiles

@@ -1,0 +1,207 @@
+#!/usr/bin/env python
+import roslib
+roslib.load_manifest('localizer')
+import rospy
+import sys, select, termios, tty
+from std_msgs.msg import String, Bool, ColorRGBA
+import sensor_msgs.msg
+import message_filters
+import collections
+from detection_msgs.msg import Detection
+from localizer.srv import Localize
+from sensor_msgs.msg import CameraInfo
+from visualization_msgs.msg import Marker, MarkerArray
+from image_geometry import PinholeCameraModel
+from geometry_msgs.msg import Point, Vector3, PointStamped
+new_detection = False
+import time
+import math
+import tf
+import copy
+
+class DetectionMapper():
+
+	def euclidean_distance(self,marker1,marker2):
+		print "Evklidska razdalja med markerjema: ",math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 )
+		return math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 )
+		    #return math.sqrt( (marker1.pose.position.x - marker2.pose.position.x)**2 + (marker1.pose.position.y - marker2.pose.position.y)**2 + (marker1.pose.position.z - marker2.pose.position.z)**2 )
+	
+	def preblizu(self,marker):
+		razdalja_min=self.euclid_dist
+		#razdalja_min=0.31
+		zavrzi_marker = False
+		for obstojeci_marker in self.faces_locations.markers:
+			if self.euclidean_distance(marker,obstojeci_marker) < razdalja_min:
+				print "***Novi marker zavernjen, ker je preblizu obstojecim! distanca = ",self.euclidean_distance(marker,obstojeci_marker)
+				zavrzi_marker = True
+				break
+		return zavrzi_marker
+
+	def filter_markers(self):
+		min_detekcij=5 #minimalno stevilo detekcij potrebnih za zanesljivo
+		idx_start=0;
+		idx_end=1;
+		i=1;
+		while i<len(self.markers.markers):
+			if self.euclidean_distance(self.markers.markers[i],self.markers.markers[i-1]) < self.euclid_dist and idx_end-idx_start<min_detekcij:
+				idx_end+=1
+			else:
+				x_avg=0
+				y_avg=0
+				z_avg=0
+				j=idx_end-1
+				while j>=idx_start:
+					x_avg += self.markers.markers[j].pose.position.x
+					y_avg += self.markers.markers[j].pose.position.y
+					z_avg += self.markers.markers[j].pose.position.z
+					if j==(int)((idx_end+idx_start)/2):
+						marker_tmp=copy.deepcopy(self.markers.markers[j])
+					del self.markers.markers[j] #ko si marker enkrat uposteval ga izbrisi
+					j-=1
+				x_avg/=idx_end-idx_start
+				y_avg/=idx_end-idx_start
+				z_avg/=idx_end-idx_start
+				#print "Zamenjujem ",idx_end-idx_start," markerjev s tocko (",x_avg," , ",y_avg," , ",z_avg
+				#Dodaj nov marker namesto izbrisanih!
+				marker = Marker()
+				marker.header.stamp = marker_tmp.header.stamp
+				marker.header.frame_id = marker_tmp.header.frame_id
+				#marker.pose.position = Point(x_avg,y_avg,z_avg) #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+				marker.pose.position = marker_tmp.pose.position
+				marker.type = Marker.CYLINDER
+				marker.action = Marker.ADD
+				marker.frame_locked = False
+				marker.lifetime = rospy.Time(0)
+				marker.id = self.marker_id_counter
+				marker.scale = Vector3(0.2, 0.2, 0.4)
+				marker.color = ColorRGBA(0, 0, 1, 1)
+				self.markers.markers.append(marker)
+				self.marker_id_counter += 1
+
+				#Ce je marker preblizu ze katerem od dektetiranih ga zavrzi
+				#if not self.preblizu(marker) and z_avg<0.784 and not (x_avg == 0 and y_avg==0 and z_avg==0):
+				
+				#current_robot_position=
+				(trans,rot)=self.listener.lookupTransform("/map","base_link",rospy.Time(0))
+				
+				if not marker_tmp.pose.position.z==0.304  not self.preblizu(marker) and z_avg<0.784 and not (marker_tmp.pose.position.x<trans[0]+0.15 and marker_tmp.pose.position.x>trans[0]-0.15 and marker_tmp.pose.position.y<trans[1]+0.15 and marker_tmp.pose.position.y>trans[1]-0.15 and marker_tmp.pose.position.z<trans[2]+0.15 and marker_tmp.pose.position.z>trans[2]-0.15)  and not ((marker_tmp.pose.position.x < 1.6 and marker_tmp.pose.position.x > 1.5) and (marker_tmp.pose.position.y<1.5 and marker_tmp.pose.position.y>1.4) and (marker_tmp.pose.position.z<0.31 and marker_tmp.pose.position.z>0.30)):
+					self.faces_locations.markers.append(marker)
+					self.face_detected.publish(marker)
+					print "**dodajam nov marker"
+					print "Shranjeni markerji so: "
+					for m in self.faces_locations.markers:
+						print "\t(",m.pose.position.x," , ",m.pose.position.y," , ",m.pose.position.z
+						idx_start=i
+						idx_end=i+1
+			i+=1
+
+
+	def camera_callback(self, camera_info):
+		self.camera_infos.append(camera_info)
+
+	def detections_callback(self, detection):
+		global new_detection
+		new_detection=True
+		u = detection.x + detection.width / 2
+		v = detection.y + detection.height / 2
+		camera_info = None
+		best_time = 100
+		for ci in self.camera_infos:
+			time = abs(ci.header.stamp.to_sec() - detection.header.stamp.to_sec())
+			if time < best_time:
+				camera_info = ci
+				best_time = time
+
+		if not camera_info or best_time > 1:
+			return 
+		camera_model = PinholeCameraModel()
+		camera_model.fromCameraInfo(camera_info)
+		point = Point(((u - camera_model.cx()) - camera_model.Tx()) / camera_model.fx(),
+			((v - camera_model.cy()) - camera_model.Ty()) / camera_model.fy(), 1)
+
+		localization = self.localize(detection.header, point, self.region_scope)
+		print "Tocka pred transformacijo v /map: (",localization.pose.position.x," , ",localization.pose.position.y," , ",localization.pose.position.z,")"
+		
+		try:
+			point_bf = Point(localization.pose.position.x,localization.pose.position.y,localization.pose.position.z)
+			ps_bf = PointStamped()
+			ps_bf.point = point_bf
+			ps_bf.header = detection.header
+			ps_af = self.listener.transformPoint("/map",ps_bf)
+			print "Transformirana tocka: (",ps_af.point.x," , ",ps_af.point.y," , ",ps_af.point.z,")"
+		except:
+			print "Neuspesna transformacija!"
+			return
+
+
+		if not localization:
+			return
+
+		marker = Marker()
+		marker.header.stamp = detection.header.stamp
+		#marker.header.stamp = rospy.Time.now()
+		marker.header.frame_id = "/map"
+		#marker.pose = localization.pose
+		marker.pose.position = ps_af.point
+		#marker.pose.orientation = Quaternion(rot)
+		marker.type = Marker.CUBE
+		marker.action = Marker.ADD
+		marker.frame_locked = False
+		marker.lifetime = rospy.Duration.from_sec(1)
+		marker.id = self.marker_id_counter
+		marker.scale = Vector3(0.1, 0.1, 0.1)
+		marker.color = ColorRGBA(1, 0, 0, 1)
+		self.markers.markers.append(marker)
+		self.marker_id_counter += 1
+
+		print "Detection frameId: ", detection.header.frame_id
+
+	def flush(self):
+		if not self.markers.markers:
+			self.markers = MarkerArray()
+			return
+		self.markers_pub.publish(self.markers)
+		#self.markers = MarkerArray()
+
+	def __init__(self):
+		self.markers = MarkerArray()
+		self.marker_id_counter = 0
+		self.region_scope = rospy.get_param('~region', 3)
+		self.buffer_size = rospy.get_param('~camera_buffer_size', 50)
+		rospy.wait_for_service('localizer/localize')
+
+		self.camera_infos = collections.deque(maxlen = self.buffer_size)
+		self.detections_sub = message_filters.Subscriber('detections', Detection)
+		self.detections_sub.registerCallback(self.detections_callback)
+
+		self.camera_sub = message_filters.Subscriber('camera_info', CameraInfo)
+		self.camera_sub.registerCallback(self.camera_callback)
+
+		self.localize = rospy.ServiceProxy('localizer/localize', Localize)
+		self.markers_pub = rospy.Publisher('markers', MarkerArray)
+
+        #na topic faces_locations posiljaj koordinate koncnih detekcij
+		self.faces_locations=MarkerArray()
+		self.faces_locations_pub = rospy.Publisher('faces_locations', MarkerArray)
+		self.face_detected = rospy.Publisher('face_detected', Marker)
+		self.euclid_dist=0.45
+
+		self.listener = tf.TransformListener()
+   
+if __name__ == '__main__':
+	global new_detection
+	rospy.init_node('mapper')
+
+	try:
+		mapper = DetectionMapper()
+		r = rospy.Rate(30)
+		while not rospy.is_shutdown():
+			if new_detection:
+				mapper.flush()
+				mapper.filter_markers()
+				mapper.faces_locations_pub.publish(mapper.faces_locations)
+				new_detection=False
+				r.sleep()
+
+	except rospy.ROSInterruptException: pass
+

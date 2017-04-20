@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: usb_cam
+Description: Description of usb_cam
+Version: 0.3.4
+Cflags: -I/home/robert/ROS/src/usb_cam-develop/include
+Libs: -L/home/robert/ROS/devel/lib -lusb_cam
+Requires: 

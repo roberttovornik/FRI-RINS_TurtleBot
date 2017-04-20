@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: detection_msgs
+Description: Description of detection_msgs
+Version: 0.1.0
+Cflags: -I/home/robert/ROS/devel/include
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: message_runtime std_msgs geometry_msgs sensor_msgs

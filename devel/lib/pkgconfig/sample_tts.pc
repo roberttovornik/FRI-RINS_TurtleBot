@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: sample_tts
+Description: Description of sample_tts
+Version: 0.0.0
+Cflags: 
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: 

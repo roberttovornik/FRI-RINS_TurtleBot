@@ -1,0 +1,6 @@
+set(exercise2_SETUP_PY_VERSION "0.0.0")
+set(exercise2_SETUP_PY_SCRIPTS "")
+set(exercise2_SETUP_PY_PACKAGES "turtlemove")
+set(exercise2_SETUP_PY_PACKAGE_DIRS "src/turtlemove")
+set(exercise2_SETUP_PY_MODULES "")
+set(exercise2_SETUP_PY_MODULE_DIRS "")

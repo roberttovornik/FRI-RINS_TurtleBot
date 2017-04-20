@@ -1,0 +1,82 @@
+#!/usr/bin/env python
+import roslib
+roslib.load_manifest('exercise4')
+import rospy
+import sensor_msgs.msg
+import message_filters
+import tf
+from std_msgs.msg import String, Bool, ColorRGBA
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point, Vector3
+
+class Facemarker():
+	
+	def check_for_face(self):		
+		
+		# hardcode new location
+		faceLocation = [self.xVal, self.yVal, self.zVal]
+		self.detected.append(faceLocation)
+		
+		# increase values
+		self.xVal += 0.1
+		self.yVal += 0.5
+		
+		faceMarkers = MarkerArray()
+
+		i = 0
+		for point in self.detected:
+				marker = Marker()
+				marker.header.stamp = rospy.Time.now()
+				marker.header.frame_id = '/map'
+				marker.pose.position = Point(point[0], point[1], point[2])
+				marker.type = Marker.CYLINDER
+				marker.action = Marker.ADD
+				marker.frame_locked = False
+				marker.lifetime = rospy.Time(0)
+				marker.id = i
+				marker.scale = Vector3(0.3, 0.3, 0.3)
+				marker.color = ColorRGBA(1, 1, 0, 1)
+				faceMarkers.markers.append(marker)
+				i = i + 1
+
+		self.detected_pub.publish(faceMarkers)
+
+		self.message_counter = self.message_counter + 1
+
+	
+	def __init__(self):
+		# default response rate
+		self.rate = rospy.get_param('~rate', 1)
+		
+		# actual topic (under node faceMarker), where we wish to publish all face detections
+		markers_topic = rospy.get_param('~markers_topic', rospy.resolve_name('%s/detected' % rospy.get_name()))
+		
+		# default transform listener
+		self.listener = tf.TransformListener()
+		
+		#default values
+		self.xVal = 1.0;
+		self.yVal = 1.0;
+		self.zVal = 0.0;
+		
+		# create detection publisher
+		self.detected_pub = rospy.Publisher(markers_topic, MarkerArray, queue_size=5)
+		# store detections in an array
+		self.detected = []
+
+		self.message_counter = 0
+
+if __name__ == '__main__':
+		
+		# initiate communications node
+		rospy.init_node('facemarker')
+		try:
+			fm = Facemarker()
+			r = rospy.Rate(fm.rate)
+			#keep publishing faces -> change to only respond to new publishment to topic
+			while not rospy.is_shutdown():
+				fm.check_for_face()
+				r.sleep()
+		except rospy.ROSInterruptException: pass
+
+

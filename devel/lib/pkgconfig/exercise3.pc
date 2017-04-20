@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: exercise3
+Description: Description of exercise3
+Version: 0.0.0
+Cflags: 
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: 

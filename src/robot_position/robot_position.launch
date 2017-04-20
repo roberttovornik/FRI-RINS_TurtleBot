@@ -1,0 +1,8 @@
+<launch>
+
+  <node pkg="localizer" type="robot_position" name="robot_position" output="screen">
+    <param name="rate" type="double" value="1" />
+	<param name="export_file" type="str" value="../ROS/src/depth/localizer/goals_run2.txt" />
+  </node>
+
+</launch>

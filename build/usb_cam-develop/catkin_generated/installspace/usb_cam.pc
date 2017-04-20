@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/install
+
+Name: usb_cam
+Description: Description of usb_cam
+Version: 0.3.4
+Cflags: -I/home/robert/ROS/install/include
+Libs: -L/home/robert/ROS/install/lib -lusb_cam
+Requires: 

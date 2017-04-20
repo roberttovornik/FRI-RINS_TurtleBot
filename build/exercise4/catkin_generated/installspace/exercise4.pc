@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/install
+
+Name: exercise4
+Description: Description of exercise4
+Version: 0.0.0
+Cflags: 
+Libs: -L/home/robert/ROS/install/lib 
+Requires: message_runtime

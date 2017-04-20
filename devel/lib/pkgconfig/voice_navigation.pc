@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: voice_navigation
+Description: Description of voice_navigation
+Version: 0.1.0
+Cflags: 
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: 

@@ -1,0 +1,339 @@
+#!/usr/bin/env python
+import roslib
+roslib.load_manifest('localizer')
+import rospy
+import sensor_msgs.msg
+import message_filters
+import tf
+import sys
+import os
+import math
+import numpy as np
+from std_msgs.msg import String, Bool, ColorRGBA
+from visualization_msgs.msg import Marker, MarkerArray
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from geometry_msgs.msg import Pose, Point, Quaternion, Twist, Vector3, PointStamped
+from actionlib_msgs.msg import GoalStatus
+from sensor_msgs.msg import LaserScan
+
+import actionlib
+
+class Robot():
+	def push_position(self):
+		try:
+			(trans, rot) = self.listener.lookupTransform('/map', '/base_link', rospy.Time(0))
+			
+			self.point_pos = trans
+			self.point_rot = rot
+			# print self.point_pos, self.point_rot
+
+		except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+			pass
+
+
+	def move(self, goal, rotate=True):
+		# Send the goal pose to the MoveBaseAction server
+		self.move_base.send_goal(goal)
+
+		# Allow 20s to get there
+		finished_within_time = self.move_base.wait_for_result(rospy.Duration(20)) 
+		# finished_within_time = True
+
+		# If we don't get there in time, abort the goal
+		if not finished_within_time:
+			self.move_base.cancel_goal()
+			rospy.loginfo("Timed out achieving goal")
+		else:
+			# We made it!
+			state = self.move_base.get_state()
+			if state == GoalStatus.SUCCEEDED:
+				rospy.loginfo("Goal succeeded!")
+				self.face_success = True
+				rr = rospy.Rate(self.rotate_rate)
+				angle = 0
+				while not rospy.is_shutdown() and angle <= 140 and rotate == True:
+					twist = Twist()
+					twist.linear.x = 0
+					twist.angular.z = (35.0 / 360.0) * 2.0 * math.pi
+					self.rotation_pub.publish(twist)
+					angle += 3
+					rr.sleep()
+
+	def move_to_goal(self, point_goal):
+		# Cycle through the  waypoints
+		# while not rospy.is_shutdown():
+			
+		point_goal = [float(i) for i in point_goal.split()]
+		# Intialize the waypoint goal
+		goal = MoveBaseGoal()
+
+		# Use the map frame to define goal poses
+		goal.target_pose.header.frame_id = 'map'
+
+		# Set the time stamp to "now"
+		goal.target_pose.header.stamp = rospy.Time.now()
+
+		# Set the goal pose to the i-th waypoint
+		# goal.target_pose.pose.position = Point(self.point_pos)
+		# goal.target_pose.pose.orientation = Quaternion(self.point_rot)
+		# goal.target_pose.pose.position = Point(-1.462101640051165, 1.062870900857955, 0.017)
+		# goal.target_pose.pose.orientation = Quaternion(0.0, 0.0, 0.43672759485582463, 0.8995938016079517)
+
+		goal.target_pose.pose.position = Point(point_goal[0], point_goal[1], point_goal[2])
+		goal.target_pose.pose.orientation = Quaternion(point_goal[3], point_goal[4], point_goal[5], point_goal[6])
+		# orient = tf.transformations.quaternion_from_euler(point_goal[3], point_goal[4], point_goal[5])
+		# goal.target_pose.pose.orientation = Quaternion(orient[0], orient[1], orient[2], orient[3])
+		
+		# print goal.target_pose.pose.position, goal.target_pose.pose.orientation
+		# Start the robot moving toward the goal
+		self.move(goal)
+
+	def move_to_face(self):
+		# Cycle through the  waypoints
+		# while not rospy.is_shutdown():
+			
+		# Intialize the waypoint goal
+		goal = MoveBaseGoal()
+
+		# Use the map frame to define goal poses
+		goal.target_pose.header.frame_id = 'map'
+
+		# Set the time stamp to "now"
+		goal.target_pose.header.stamp = rospy.Time.now()
+
+		goal.target_pose.pose.position = self.generate_point(self.face_trans, self.face_location.pose.position)
+		goal.target_pose.pose.orientation = Quaternion(self.face_rot[0], self.face_rot[1], self.face_rot[2], self.face_rot[3])
+
+		
+		marker = Marker()
+		marker.header.stamp = rospy.Time(0)
+		marker.header.frame_id = "/map"
+		marker.pose = goal.target_pose.pose
+		marker.type = Marker.CUBE
+		marker.action = Marker.ADD
+		marker.frame_locked = False
+		marker.lifetime = rospy.Duration.from_sec(1)
+		marker.id = 0
+		marker.scale = Vector3(0.1, 0.1, 0.1)
+		marker.color = ColorRGBA(1, 0, 1, 1)
+		self.marker_pub.publish(marker)
+		
+
+		print goal.target_pose.pose.position, goal.target_pose.pose.orientation
+	
+		self.face_success = False
+		self.move(goal, rotate=False)
+		if not self.face_success:
+			goal.target_pose.pose.position = Point(self.face_trans[0], self.face_trans[1], self.face_trans[2])
+			goal.target_pose.pose.orientation = Quaternion(self.face_rot[0], self.face_rot[1], self.face_rot[2], self.face_rot[3])
+			self.move(goal, rotate=False)
+
+		self.sound_pub.publish(String("Say hello to my little friend. papapapapapa"))
+		self.face_location = None
+
+		rr = rospy.Rate(self.rotate_rate)
+		angle = 0
+		while not rospy.is_shutdown() and angle <= 100:
+			angle += 5
+			rr.sleep()
+		
+
+	def generate_point(self, point1, point2):
+		'''
+		length = math.sqrt( (point1[0] - point2.x)**2 + (point1[1] - point2.y)**2 ) 
+		v_x = (point1[0] - point2.x) / length
+		v_y = (point1[1] - point2.y) / length
+		print "Approach length: ", length
+
+		x = point1[0] + (v_x * self.face_dist)
+		y = point1[1] + (v_y * self.face_dist)
+		z = point2.z
+		'''
+		x = (point1[0] + point2.x) / 2.0
+		y = (point1[1] + point2.y) / 2.0
+		z = point1[2]
+		
+		return Point(x, y, z)
+		
+
+	def face_callback(self, marker):		
+		(self.face_trans, self.face_rot) = self.listener.lookupTransform('/map', '/base_link', rospy.Time(0))
+		
+		'''
+		point = PointStamped()
+		point.point = Point(self.face_trans[0], self.face_trans[1], self.face_trans[2])
+		point.header = marker.header
+		trans = self.listener.transformPoint('/map', point)		
+		self.face_trans = (trans.point.x, trans.point.y, trans.point.z)
+		print "New face: ", marker.pose.position
+		'''
+		
+		self.face_location = marker
+		self.detections_number++
+
+
+	def cmd_callback(self, cmd):
+		if cmd.data == "position_save":
+			# roll, pitch, yaw = tf.transformations.euler_from_quaternion(quaternion)
+			euler = tf.transformations.euler_from_quaternion(self.point_rot)
+
+			if (self.export_file):
+				f = open(self.export_file, 'ab+')
+				f.write(' '.join(format(f, 'f') for f in self.point_pos) + ' ' + ' '.join(format(f, 'f') for f in self.point_rot) + "\n")
+				f.close()
+
+				print self.point_pos, self.point_rot
+
+		if cmd.data == "rotate":
+			self.rotate()
+
+	def rotate(self, rot_angle=35.0):
+		rr = rospy.Rate(self.rotate_rate)
+		angle = 0
+		while not rospy.is_shutdown() and angle <= 140:
+			twist = Twist()
+			twist.linear.x = 0
+			twist.angular.z = (rot_angle / 360.0) * 2.0 * math.pi
+			self.rotation_pub.publish(twist)
+			angle += 3
+			rr.sleep()
+
+	
+	def laser_callback(self, scan):
+		'''		
+		#determines the closest thing to the Robit.	
+		self.getPosition(scan)
+		rospy.logdebug('position: {0}'.format(self.position))
+
+		#if there's something within self.followDist from us, start following.
+		"""Also publishes to bark.py once it begins to follow. This is to get
+		the robot to begin barking as it follows the person."""
+		if (self.closest < self.followDist):
+			self.pubbark = rospy.Publisher('follow', String)
+			self.pubbark.publish(String("Bark"))
+			self.follow()
+		#else just don't run at all.
+		else:
+			self.stop() 
+
+			# Add a log message, so that we know what's going on
+			rospy.logdebug('Distance: {0}, speed: {1}, angular: {2}'.format(self.closest, self.command.linear.x, self.command.angular.z))
+		#Ensure we have only one publish command.
+		self.pub.publish(self.command)
+		'''
+		self.laser_scan_parse(scan)
+		# print scan.angle_increment, scan.angle_min, scan.angle_max
+		
+
+	def laser_scan_parse(self, scan):
+		if not self.scan:
+			self.scan = True
+		else:
+			return
+		depths = []
+
+		f = open(self.export_file + "scan.txt", 'ab+')
+
+		for d in scan.ranges:
+			if not np.isnan(d):
+				f.write(str(d) + '\n')
+				depths.append(d)
+			else:
+				f.write( '0.123\n')
+		
+		# print min(depths)
+
+	def load_goals(self):
+		f = open(self.export_file, 'r')
+		self.goals = []
+		self.goals = f.readlines()
+
+
+	def __init__(self):
+		self.rate = rospy.get_param('~rate', 1)
+		self.export_file = rospy.get_param('~export_file', None)
+
+		markers_topic = rospy.get_param('~markers_topic', rospy.resolve_name('%s/trail' % rospy.get_name()))
+
+		self.listener = tf.TransformListener()
+
+		rospy.Subscriber('/face_detected', Marker, self.face_callback)
+
+		rospy.Subscriber('robot_command', String, self.cmd_callback)
+
+		rospy.Subscriber('scan', LaserScan, self.laser_callback)
+		self.scan = True
+
+		self.trail_pub = rospy.Publisher(markers_topic, MarkerArray, queue_size=5)
+		self.trail = []
+
+		self.rotation_pub = rospy.Publisher('cmd_vel_mux/input/teleop', Twist, queue_size = 1000)
+
+		self.sound_pub = rospy.Publisher('/sound_listener', String, queue_size = 10)
+
+		self.marker_pub = rospy.Publisher('/approach', Marker, queue_size = 10)
+
+		self.message_counter = 0
+
+		# Subscribe to the move_base action server
+		self.move_base = actionlib.SimpleActionClient("move_base", MoveBaseAction)
+
+		rospy.loginfo("Waiting for move_base action server...")
+
+		# Wait 20 seconds for the action server to become available
+		self.move_base.wait_for_server(rospy.Duration(20))
+
+		self.point_pos = None
+		self.point_rot = None
+
+		rospy.loginfo("Connected to move base server")
+		rospy.loginfo("Starting navigation test")
+
+		self.load_goals()
+
+		self.rotate_rate = 5
+		self.face_dist = 0.2
+
+		self.face_location = None
+		self.detections_number = 0
+		
+
+if __name__ == '__main__':
+
+		rospy.init_node('robot_position')
+
+		try:
+			robot = Robot()
+			print "ROBOT made"
+			
+			robot.rotate(35.0)
+			robot.rotate(-35.0)
+			
+			while robot.detections_number < 3:
+				for g in robot.goals:
+					if not robot.face_location:
+						print "Moving to...", g
+						robot.move_to_goal(g)
+					else:
+						robot.move_to_goal(g)
+						print "Aproaching face!"
+						robot.move_to_face()
+						# if robot.detections_number == 3
+							# break
+			
+			'''
+			r = rospy.Rate(robot.rate)
+			while not rospy.is_shutdown():
+				if robot.face_location:
+					robot.move_to_face()
+				robot.push_position()
+				r.sleep()
+			'''
+				
+
+			
+		except rospy.ROSInterruptException: pass
+
+
+
+

@@ -1,0 +1,8 @@
+prefix=/home/robert/ROS/devel
+
+Name: opencv_detector
+Description: Description of opencv_detector
+Version: 0.1.0
+Cflags: 
+Libs: -L/home/robert/ROS/devel/lib 
+Requires: message_runtime
