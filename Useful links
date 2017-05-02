@@ -1,4 +1,8 @@
 Pointcloud_manipulation -> people detection on floor
 -----------------------------------------------------
+
+People deteciton on planar field
 http://pointclouds.org/documentation/tutorials/ground_based_rgbd_people_detection.php
+
+Detection (proposed) process
 http://answers.ros.org/question/244797/model-free-3d-object-detection-tracking-pcl/
